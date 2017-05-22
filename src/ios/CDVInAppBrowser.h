@@ -40,15 +40,19 @@
 - (void)close:(CDVInvokedUrlCommand*)command;
 - (void)injectScriptCode:(CDVInvokedUrlCommand*)command;
 - (void)show:(CDVInvokedUrlCommand*)command;
-- (void)hide:(CDVInvokedUrlCommand*)command;
 
 @end
 
 @interface CDVInAppBrowserOptions : NSObject {}
 
 @property (nonatomic, assign) BOOL location;
-@property (nonatomic, assign) BOOL toolbar;
+@property (nonatomic, assign) BOOL shownavbar;
+@property (nonatomic, assign) BOOL showdoctitle;
+@property (nonatomic, assign) BOOL bottombar;
 @property (nonatomic, copy) NSString* closebuttoncaption;
+@property (nonatomic, copy) NSString* bottombuttoncaption;
+@property (nonatomic, copy) NSString* navbarcaption;
+@property (nonatomic, copy) NSString* bottombuttonicon;
 @property (nonatomic, copy) NSString* toolbarposition;
 @property (nonatomic, assign) BOOL clearcache;
 @property (nonatomic, assign) BOOL clearsessioncache;
@@ -84,22 +88,26 @@
 }
 
 @property (nonatomic, strong) IBOutlet UIWebView* webView;
-@property (nonatomic, strong) IBOutlet UIBarButtonItem* closeButton;
+@property (nonatomic, strong) IBOutlet UIButton* closeButton;
+@property (nonatomic, strong) IBOutlet UILabel* navTitle;
 @property (nonatomic, strong) IBOutlet UILabel* addressLabel;
 @property (nonatomic, strong) IBOutlet UIBarButtonItem* backButton;
 @property (nonatomic, strong) IBOutlet UIBarButtonItem* forwardButton;
+@property (nonatomic, strong) IBOutlet UIButton* bottomButton;
 @property (nonatomic, strong) IBOutlet UIActivityIndicatorView* spinner;
-@property (nonatomic, strong) IBOutlet UIToolbar* toolbar;
+@property (nonatomic, strong) IBOutlet UIView* navbar;
 
 @property (nonatomic, weak) id <CDVScreenOrientationDelegate> orientationDelegate;
 @property (nonatomic, weak) CDVInAppBrowser* navigationDelegate;
 @property (nonatomic) NSURL* currentURL;
 
-- (void)close;
+- (void)close:(UIView*)sender;
 - (void)navigateTo:(NSURL*)url;
 - (void)showLocationBar:(BOOL)show;
 - (void)showToolBar:(BOOL)show : (NSString *) toolbarPosition;
 - (void)setCloseButtonTitle:(NSString*)title;
+- (void)configNavlabelTitle:(NSString*)title;
+- (void) configWebviewDocTitle:(NSString*)title;
 
 - (id)initWithUserAgent:(NSString*)userAgent prevUserAgent:(NSString*)prevUserAgent browserOptions: (CDVInAppBrowserOptions*) browserOptions;
 
@@ -110,4 +118,3 @@
 @property (nonatomic, weak) id <CDVScreenOrientationDelegate> orientationDelegate;
 
 @end
-
