@@ -28,8 +28,12 @@
 #define    kInAppBrowserToolbarBarPositionBottom @"bottom"
 #define    kInAppBrowserToolbarBarPositionTop @"top"
 
+#define    kInAppBrowserNavbarTitleDefaultCaption @""
+#define    kInAppBrowserBottomButtonDefaultCaption @""
+#define    kInAppBrowserBottomButtonDefaultIcon @""
+
+#define    NAVBAR_FONT_SIZE 18.0
 #define    TOOLBAR_HEIGHT 44.0
-#define    STATUSBAR_HEIGHT 20.0
 #define    LOCATIONBAR_HEIGHT 21.0
 #define    FOOTER_HEIGHT ((TOOLBAR_HEIGHT) + (LOCATIONBAR_HEIGHT))
 
@@ -48,11 +52,6 @@
     _callbackIdPattern = nil;
 }
 
-- (id)settingForKey:(NSString*)key
-{
-    return [self.commandDelegate.settings objectForKey:[key lowercaseString]];
-}
-
 - (void)onReset
 {
     [self close:nil];
@@ -65,25 +64,42 @@
         return;
     }
     // Things are cleaned up in browserExit.
-    [self.inAppBrowserViewController close];
+    [self.inAppBrowserViewController close:nil];
 }
 
 - (BOOL) isSystemUrl:(NSURL*)url
 {
-	if ([[url host] isEqualToString:@"itunes.apple.com"]) {
-		return YES;
-	}
+    if ([[url host] isEqualToString:@"itunes.apple.com"]) {
+        return YES;
+    }
 
-	return NO;
+    return NO;
 }
 
 - (void)open:(CDVInvokedUrlCommand*)command
 {
     CDVPluginResult* pluginResult;
+    // url自动辨别，如果不是规范的URI头部，cdv及webview会将头部自动填充。
+    // 所以直接用:作为类型头部，又或者把type放进opations中进行识别。选择前者
+    NSString * urlStr = [command argumentAtIndex:0];
+    NSUInteger index = [urlStr rangeOfString:@":"].location;
+    NSLog(@"%@", urlStr);
+    NSString *type = [urlStr substringToIndex:index];
+    NSString *url = @"";
+    if([type isEqualToString:@"url"]){
+        url = [urlStr substringFromIndex:index+1];
+    } else if([type isEqualToString:@"file"]){
+        url = [urlStr substringFromIndex:index+1];
+    } else if([type isEqualToString:@"script"]){
+        url = [urlStr substringFromIndex:index+1];
+    } else {
+        url = urlStr;
+    }
 
-    NSString* url = [command argumentAtIndex:0];
+    
+    
     NSString* target = [command argumentAtIndex:1 withDefault:kInAppBrowserTargetSelf];
-    NSString* options = [command argumentAtIndex:2 withDefault:@"" andClass:[NSString class]];
+    NSString* options = [command argumentAtIndex:2 withDefault:@{} andClass:[NSDictionary class]];
 
     self.callbackId = command.callbackId;
 
@@ -116,7 +132,7 @@
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 }
 
-- (void)openInInAppBrowser:(NSURL*)url withOptions:(NSString*)options
+- (void)openInInAppBrowser:(NSURL*)url withOptions:(NSDictionary*)options
 {
     CDVInAppBrowserOptions* browserOptions = [CDVInAppBrowserOptions parseOptions:options];
 
@@ -143,16 +159,8 @@
     }
 
     if (self.inAppBrowserViewController == nil) {
-        NSString* userAgent = [CDVUserAgentUtil originalUserAgent];
-        NSString* overrideUserAgent = [self settingForKey:@"OverrideUserAgent"];
-        NSString* appendUserAgent = [self settingForKey:@"AppendUserAgent"];
-        if(overrideUserAgent){
-            userAgent = overrideUserAgent;
-        }
-        if(appendUserAgent){
-            userAgent = [userAgent stringByAppendingString: appendUserAgent];
-        }
-        self.inAppBrowserViewController = [[CDVInAppBrowserViewController alloc] initWithUserAgent:userAgent prevUserAgent:[self.commandDelegate userAgent] browserOptions: browserOptions];
+        NSString* originalUA = [CDVUserAgentUtil originalUserAgent];
+        self.inAppBrowserViewController = [[CDVInAppBrowserViewController alloc] initWithUserAgent:originalUA prevUserAgent:[self.commandDelegate userAgent] browserOptions: browserOptions];
         self.inAppBrowserViewController.navigationDelegate = self;
 
         if ([self.viewController conformsToProtocol:@protocol(CDVScreenOrientationDelegate)]) {
@@ -161,7 +169,7 @@
     }
 
     [self.inAppBrowserViewController showLocationBar:browserOptions.location];
-    [self.inAppBrowserViewController showToolBar:browserOptions.toolbar :browserOptions.toolbarposition];
+    [self.inAppBrowserViewController showToolBar:browserOptions.shownavbar :browserOptions.toolbarposition];
     if (browserOptions.closebuttoncaption != nil) {
         [self.inAppBrowserViewController setCloseButtonTitle:browserOptions.closebuttoncaption];
     }
@@ -232,45 +240,13 @@
                                    initWithRootViewController:self.inAppBrowserViewController];
     nav.orientationDelegate = self.inAppBrowserViewController;
     nav.navigationBarHidden = YES;
-    nav.modalPresentationStyle = self.inAppBrowserViewController.modalPresentationStyle;
 
     __weak CDVInAppBrowser* weakSelf = self;
 
     // Run later to avoid the "took a long time" log message.
     dispatch_async(dispatch_get_main_queue(), ^{
         if (weakSelf.inAppBrowserViewController != nil) {
-            CGRect frame = [[UIScreen mainScreen] bounds];
-            UIWindow *tmpWindow = [[UIWindow alloc] initWithFrame:frame];
-            UIViewController *tmpController = [[UIViewController alloc] init];
-            [tmpWindow setRootViewController:tmpController];
-            [tmpWindow setWindowLevel:UIWindowLevelNormal];
-
-            [tmpWindow makeKeyAndVisible];
-            [tmpController presentViewController:nav animated:YES completion:nil];
-        }
-    });
-}
-
-- (void)hide:(CDVInvokedUrlCommand*)command
-{
-    if (self.inAppBrowserViewController == nil) {
-        NSLog(@"Tried to hide IAB after it was closed.");
-        return;
-
-
-    }
-    if (_previousStatusBarStyle == -1) {
-        NSLog(@"Tried to hide IAB while already hidden");
-        return;
-    }
-
-    _previousStatusBarStyle = [UIApplication sharedApplication].statusBarStyle;
-
-    // Run later to avoid the "took a long time" log message.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.inAppBrowserViewController != nil) {
-            _previousStatusBarStyle = -1;
-            [self.viewController dismissViewControllerAnimated:YES completion:nil];
+            [weakSelf.viewController presentViewController:nav animated:YES completion:nil];
         }
     });
 }
@@ -294,8 +270,11 @@
 
 - (void)openInSystem:(NSURL*)url
 {
-    [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:CDVPluginHandleOpenURLNotification object:url]];
-    [[UIApplication sharedApplication] openURL:url];
+    if ([[UIApplication sharedApplication] canOpenURL:url]) {
+        [[UIApplication sharedApplication] openURL:url];
+    } else { // handle any custom schemes to plugins
+        [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:CDVPluginHandleOpenURLNotification object:url]];
+    }
 }
 
 // This is a helper method for the inject{Script|Style}{Code|File} API calls, which
@@ -433,7 +412,7 @@
             [self.commandDelegate sendPluginResult:pluginResult callbackId:scriptCallbackId];
             return NO;
         }
-    }
+    } 
     //if is an app store link, let the system handle it, otherwise it fails to load it
     else if ([[ url scheme] isEqualToString:@"itms-appss"] || [[ url scheme] isEqualToString:@"itms-apps"]) {
         [theWebView stopLoading];
@@ -459,6 +438,10 @@
 - (void)webViewDidFinishLoad:(UIWebView*)theWebView
 {
     if (self.callbackId != nil) {
+        // Refresh Title
+        NSString *title=[theWebView stringByEvaluatingJavaScriptFromString:@"document.title"];
+        if(self.inAppBrowserViewController)
+        [self.inAppBrowserViewController configWebviewDocTitle:title];
         // TODO: It would be more useful to return the URL the page is actually on (e.g. if it's been redirected).
         NSString* url = [self.inAppBrowserViewController.currentURL absoluteString];
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
@@ -466,6 +449,7 @@
         [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
 
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
+        
     }
 }
 
@@ -481,11 +465,24 @@
     }
 }
 
-- (void)browserExit
+- (void)browserExit:(NSInteger)senderTag
 {
     if (self.callbackId != nil) {
+        NSDictionary *message = nil;
+        NSString *trigger = nil;
+
+        switch (senderTag) {
+            case 1:
+                trigger = @"bottombutton";
+                break;
+            case 0:
+            default:
+                trigger = @"closebutton";
+                break;
+        }
+        message = @{@"type":@"exit", @"trigger": trigger};
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-                                                      messageAsDictionary:@{@"type":@"exit"}];
+                                                      messageAsDictionary:message];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
         self.callbackId = nil;
     }
@@ -524,7 +521,7 @@
 #else
         _webViewDelegate = [[CDVWebViewDelegate alloc] initWithDelegate:self];
 #endif
-
+        
         [self createViews];
     }
 
@@ -576,30 +573,43 @@
     self.spinner.userInteractionEnabled = NO;
     [self.spinner stopAnimating];
 
-    self.closeButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
-    self.closeButton.enabled = YES;
 
-    UIBarButtonItem* flexibleSpaceButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
 
-    UIBarButtonItem* fixedSpaceButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
-    fixedSpaceButton.width = 20;
 
-    float toolbarY = toolbarIsAtBottom ? self.view.bounds.size.height - TOOLBAR_HEIGHT : 0.0;
-    CGRect toolbarFrame = CGRectMake(0.0, toolbarY, self.view.bounds.size.width, TOOLBAR_HEIGHT);
 
-    self.toolbar = [[UIToolbar alloc] initWithFrame:toolbarFrame];
-    self.toolbar.alpha = 1.000;
-    self.toolbar.autoresizesSubviews = YES;
-    self.toolbar.autoresizingMask = toolbarIsAtBottom ? (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin) : UIViewAutoresizingFlexibleWidth;
-    self.toolbar.barStyle = UIBarStyleBlackOpaque;
-    self.toolbar.clearsContextBeforeDrawing = NO;
-    self.toolbar.clipsToBounds = NO;
-    self.toolbar.contentMode = UIViewContentModeScaleToFill;
-    self.toolbar.hidden = NO;
-    self.toolbar.multipleTouchEnabled = NO;
-    self.toolbar.opaque = NO;
-    self.toolbar.userInteractionEnabled = YES;
-
+    if(_browserOptions.shownavbar) {
+        float toolbarY = toolbarIsAtBottom ? self.view.bounds.size.height - TOOLBAR_HEIGHT : 0.0;
+        CGRect navbarFrame = CGRectMake(0.0, toolbarY, self.view.bounds.size.width, TOOLBAR_HEIGHT);
+        self.navbar = [[UIView alloc]initWithFrame:navbarFrame];
+        self.navbar.alpha = 1.000;
+        [self.navbar setBackgroundColor:[UIColor whiteColor]];
+        [self.navbar setTintColor:[UIColor blackColor]];
+        self.navbar.autoresizesSubviews = YES;
+        self.navbar.autoresizingMask = toolbarIsAtBottom ? (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin) : UIViewAutoresizingFlexibleWidth;
+        self.navbar.clearsContextBeforeDrawing = NO;
+        self.navbar.clipsToBounds = NO;
+        self.navbar.contentMode = UIViewContentModeScaleToFill;
+        self.navbar.hidden = NO;
+        self.navbar.multipleTouchEnabled = NO;
+        self.navbar.opaque = NO;
+        self.navbar.userInteractionEnabled = YES;
+        //navTitle
+        self.navTitle = [[UILabel alloc] initWithFrame:CGRectMake((self.navbar.frame.size.width-87)/2, (self.navbar.frame.size.height-25)/2, 87, 25)];
+        [self configNavlabelTitle:_browserOptions.navbarcaption];
+        [self.navTitle setTextColor:[UIColor blackColor]];
+        self.navTitle.font = [UIFont systemFontOfSize:NAVBAR_FONT_SIZE];
+        [self.navbar addSubview:self.navTitle];
+        //closebutton
+        self.closeButton = [[UIButton alloc]initWithFrame:CGRectMake(25, (self.navbar.frame.size.height-20)/2, 10, 20)];
+        [self.closeButton setTitle:@"<" forState:UIControlStateNormal];
+        self.closeButton.titleLabel.font = [UIFont systemFontOfSize:NAVBAR_FONT_SIZE];
+        [self.closeButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+        [self.closeButton setTag:0];
+        [self.closeButton addTarget:self action:@selector(closeButtonClose) forControlEvents:UIControlEventTouchUpInside];
+        [self.navbar addSubview:self.closeButton];
+    }
+    
+    
     CGFloat labelInset = 5.0;
     float locationBarY = toolbarIsAtBottom ? self.view.bounds.size.height - FOOTER_HEIGHT : self.view.bounds.size.height - LOCATIONBAR_HEIGHT;
 
@@ -632,20 +642,26 @@
     self.addressLabel.textColor = [UIColor colorWithWhite:1.000 alpha:1.000];
     self.addressLabel.userInteractionEnabled = NO;
 
-    NSString* frontArrowString = NSLocalizedString(@"►", nil); // create arrow from Unicode char
-    self.forwardButton = [[UIBarButtonItem alloc] initWithTitle:frontArrowString style:UIBarButtonItemStylePlain target:self action:@selector(goForward:)];
-    self.forwardButton.enabled = YES;
-    self.forwardButton.imageInsets = UIEdgeInsetsZero;
-
-    NSString* backArrowString = NSLocalizedString(@"◄", nil); // create arrow from Unicode char
-    self.backButton = [[UIBarButtonItem alloc] initWithTitle:backArrowString style:UIBarButtonItemStylePlain target:self action:@selector(goBack:)];
-    self.backButton.enabled = YES;
-    self.backButton.imageInsets = UIEdgeInsetsZero;
-
-    [self.toolbar setItems:@[self.closeButton, flexibleSpaceButton, self.backButton, fixedSpaceButton, self.forwardButton]];
-
+    
+    if(_browserOptions.bottombar == YES) {
+        self.bottomButton = [[UIButton alloc] initWithFrame:CGRectMake(0, self.view.bounds.size.height-49, self.view.bounds.size.width, 49)];
+        [self.bottomButton setTitle:_browserOptions.bottombuttoncaption forState:UIControlStateNormal];
+        [self.bottomButton setBackgroundColor:[UIColor whiteColor]];
+        [self.bottomButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+        if(_browserOptions.bottombuttonicon) {
+            if([_browserOptions.bottombuttonicon length]>0){
+                UIImage *img = [UIImage imageNamed:@"edit.png"];
+                [self.bottomButton setImage:img forState:UIControlStateNormal];
+            }
+        }
+        [self.bottomButton setTag:1];
+        [self.bottomButton addTarget:self action:@selector(bottomButtonClose) forControlEvents:UIControlEventTouchUpInside];
+        
+    }
+    
     self.view.backgroundColor = [UIColor grayColor];
-    [self.view addSubview:self.toolbar];
+    [self.view addSubview:self.navbar];
+    [self.view addSubview:self.bottomButton];
     [self.view addSubview:self.addressLabel];
     [self.view addSubview:self.spinner];
 }
@@ -655,25 +671,49 @@
     [self.webView setFrame:frame];
 }
 
+- (void) configWebviewDocTitle:(NSString*)title
+{
+    if(_browserOptions.showdoctitle == YES) {
+        [self configNavlabelTitle:title];
+    }
+}
+
+- (void) configNavlabelTitle:(NSString*)title
+{
+    if(_browserOptions.shownavbar){
+        if(!title) title = kInAppBrowserNavbarTitleDefaultCaption;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.navTitle setText:title];
+            CGRect navTitleFrame = [self autoFrameForViewText:self.navTitle.text font:self.navTitle.font frame:self.navTitle.frame];
+            [self.navTitle setFrame:navTitleFrame];
+            [self.navTitle setNeedsDisplay];
+        });
+    }
+}
+
+- (CGRect)autoFrameForViewText:(NSString *)text font:(UIFont *)font frame:(CGRect)frame
+{
+    CGSize stringSize = [text sizeWithFont:font];
+    frame.size.width = stringSize.width;
+    return frame;
+}
+
 - (void)setCloseButtonTitle:(NSString*)title
 {
-    // the advantage of using UIBarButtonSystemItemDone is the system will localize it for you automatically
-    // but, if you want to set this yourself, knock yourself out (we can't set the title for a system Done button, so we have to create a new one)
-    self.closeButton = nil;
-    self.closeButton = [[UIBarButtonItem alloc] initWithTitle:title style:UIBarButtonItemStyleBordered target:self action:@selector(close)];
-    self.closeButton.enabled = YES;
-    self.closeButton.tintColor = [UIColor colorWithRed:60.0 / 255.0 green:136.0 / 255.0 blue:230.0 / 255.0 alpha:1];
-
-    NSMutableArray* items = [self.toolbar.items mutableCopy];
-    [items replaceObjectAtIndex:0 withObject:self.closeButton];
-    [self.toolbar setItems:items];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.closeButton setTitle:title forState:UIControlStateNormal];
+        UILabel *label = self.closeButton.titleLabel;
+        CGRect frame = [self autoFrameForViewText:label.text font:label.font frame:self.closeButton.frame];
+        [self.closeButton setFrame:frame];
+        [self.closeButton setNeedsDisplay];
+    });
 }
 
 - (void)showLocationBar:(BOOL)show
 {
     CGRect locationbarFrame = self.addressLabel.frame;
 
-    BOOL toolbarVisible = !self.toolbar.hidden;
+    BOOL toolbarVisible = !self.navbar.hidden;
 
     // prevent double show/hide
     if (show == !(self.addressLabel.hidden)) {
@@ -722,18 +762,18 @@
 
 - (void)showToolBar:(BOOL)show : (NSString *) toolbarPosition
 {
-    CGRect toolbarFrame = self.toolbar.frame;
+    CGRect toolbarFrame = self.navbar.frame;
     CGRect locationbarFrame = self.addressLabel.frame;
 
     BOOL locationbarVisible = !self.addressLabel.hidden;
 
     // prevent double show/hide
-    if (show == !(self.toolbar.hidden)) {
+    if (show == !(self.navbar.hidden)) {
         return;
     }
 
     if (show) {
-        self.toolbar.hidden = NO;
+        self.navbar.hidden = NO;
         CGRect webViewBounds = self.view.bounds;
 
         if (locationbarVisible) {
@@ -742,12 +782,12 @@
             webViewBounds.size.height -= FOOTER_HEIGHT;
             locationbarFrame.origin.y = webViewBounds.size.height;
             self.addressLabel.frame = locationbarFrame;
-            self.toolbar.frame = toolbarFrame;
+            self.navbar.frame = toolbarFrame;
         } else {
             // no locationBar, so put toolBar at the bottom
             CGRect webViewBounds = self.view.bounds;
             webViewBounds.size.height -= TOOLBAR_HEIGHT;
-            self.toolbar.frame = toolbarFrame;
+            self.navbar.frame = toolbarFrame;
         }
 
         if ([toolbarPosition isEqualToString:kInAppBrowserToolbarBarPositionTop]) {
@@ -760,7 +800,7 @@
         [self setWebViewFrame:webViewBounds];
 
     } else {
-        self.toolbar.hidden = YES;
+        self.navbar.hidden = YES;
 
         if (locationbarVisible) {
             // locationBar is on top of toolBar, hide toolBar
@@ -802,13 +842,25 @@
     return NO;
 }
 
-- (void)close
+- (void)bottomButtonClose
+{
+    [self close:(UIView*)self.bottomButton];
+}
+
+- (void)closeButtonClose
+{
+    [self close:(UIView*)self.closeButton];
+}
+
+- (void)close:(UIView* )sender
 {
     [CDVUserAgentUtil releaseLock:&_userAgentLockToken];
     self.currentURL = nil;
-
-    if ((self.navigationDelegate != nil) && [self.navigationDelegate respondsToSelector:@selector(browserExit)]) {
-        [self.navigationDelegate browserExit];
+    
+    NSInteger tag = 0;
+    if(sender && sender.tag) tag = sender.tag;
+    if ((self.navigationDelegate != nil) && [self.navigationDelegate respondsToSelector:@selector(browserExit:)]) {
+        [self.navigationDelegate browserExit:tag];
     }
 
     __weak UIViewController* weakSelf = self;
@@ -873,7 +925,7 @@
 - (void) rePositionViews {
     if ([_browserOptions.toolbarposition isEqualToString:kInAppBrowserToolbarBarPositionTop]) {
         [self.webView setFrame:CGRectMake(self.webView.frame.origin.x, TOOLBAR_HEIGHT, self.webView.frame.size.width, self.webView.frame.size.height)];
-        [self.toolbar setFrame:CGRectMake(self.toolbar.frame.origin.x, [self getStatusBarOffset], self.toolbar.frame.size.width, self.toolbar.frame.size.height)];
+        [self.navbar setFrame:CGRectMake(self.navbar.frame.origin.x, [self getStatusBarOffset], self.navbar.frame.size.width, self.navbar.frame.size.height)];
     }
 }
 
@@ -981,17 +1033,23 @@
 {
     if (self = [super init]) {
         // default values
-        self.location = YES;
-        self.toolbar = YES;
+        self.location = NO;
+        self.shownavbar = YES;
+        self.showdoctitle = NO;
+        self.bottombar = NO;
+        
         self.closebuttoncaption = nil;
-        self.toolbarposition = kInAppBrowserToolbarBarPositionBottom;
+        self.toolbarposition = kInAppBrowserToolbarBarPositionTop;
+        self.navbarcaption = kInAppBrowserNavbarTitleDefaultCaption;
+        self.bottombuttoncaption = kInAppBrowserBottomButtonDefaultCaption;
+        self.bottombuttonicon = kInAppBrowserBottomButtonDefaultIcon;
+        
         self.clearcache = NO;
         self.clearsessioncache = NO;
-
         self.enableviewportscale = NO;
         self.mediaplaybackrequiresuseraction = NO;
         self.allowinlinemediaplayback = NO;
-        self.keyboarddisplayrequiresuseraction = YES;
+        self.keyboarddisplayrequiresuseraction = NO;
         self.suppressesincrementalrendering = NO;
         self.hidden = NO;
         self.disallowoverscroll = NO;
@@ -1000,40 +1058,30 @@
     return self;
 }
 
-+ (CDVInAppBrowserOptions*)parseOptions:(NSString*)options
++ (CDVInAppBrowserOptions*)parseOptions:(NSDictionary*)options
 {
+    // change into NSDictionary for json
     CDVInAppBrowserOptions* obj = [[CDVInAppBrowserOptions alloc] init];
+    for (NSString* akey in options) {
+        NSString* key = [akey lowercaseString];
+        NSString* value = [[options valueForKey:akey] lowercaseString];
 
-    // NOTE: this parsing does not handle quotes within values
-    NSArray* pairs = [options componentsSeparatedByString:@","];
-
-    // parse keys and values, set the properties
-    for (NSString* pair in pairs) {
-        NSArray* keyvalue = [pair componentsSeparatedByString:@"="];
-
-        if ([keyvalue count] == 2) {
-            NSString* key = [[keyvalue objectAtIndex:0] lowercaseString];
-            NSString* value = [keyvalue objectAtIndex:1];
-            NSString* value_lc = [value lowercaseString];
-
-            BOOL isBoolean = [value_lc isEqualToString:@"yes"] || [value_lc isEqualToString:@"no"];
+            BOOL isBoolean = [value isEqualToString:@"yes"] || [value isEqualToString:@"no"];
             NSNumberFormatter* numberFormatter = [[NSNumberFormatter alloc] init];
             [numberFormatter setAllowsFloats:YES];
-            BOOL isNumber = [numberFormatter numberFromString:value_lc] != nil;
+            BOOL isNumber = [numberFormatter numberFromString:value] != nil;
 
             // set the property according to the key name
             if ([obj respondsToSelector:NSSelectorFromString(key)]) {
                 if (isNumber) {
-                    [obj setValue:[numberFormatter numberFromString:value_lc] forKey:key];
+                    [obj setValue:[numberFormatter numberFromString:value] forKey:key];
                 } else if (isBoolean) {
-                    [obj setValue:[NSNumber numberWithBool:[value_lc isEqualToString:@"yes"]] forKey:key];
+                    [obj setValue:[NSNumber numberWithBool:[value isEqualToString:@"yes"]] forKey:key];
                 } else {
                     [obj setValue:value forKey:key];
                 }
             }
-        }
     }
-
     return obj;
 }
 
@@ -1041,19 +1089,13 @@
 
 @implementation CDVInAppBrowserNavigationController : UINavigationController
 
-- (void) dismissViewControllerAnimated:(BOOL)flag completion:(void (^)(void))completion {
-    if ( self.presentedViewController) {
-        [super dismissViewControllerAnimated:flag completion:completion];
-    }
-}
-
 - (void) viewDidLoad {
 
-    CGRect statusBarFrame = [self invertFrameIfNeeded:[UIApplication sharedApplication].statusBarFrame];
-    statusBarFrame.size.height = STATUSBAR_HEIGHT;
+    CGRect frame = [UIApplication sharedApplication].statusBarFrame;
+
     // simplified from: http://stackoverflow.com/a/25669695/219684
 
-    UIToolbar* bgToolbar = [[UIToolbar alloc] initWithFrame:statusBarFrame];
+    UIToolbar* bgToolbar = [[UIToolbar alloc] initWithFrame:[self invertFrameIfNeeded:frame]];
     bgToolbar.barStyle = UIBarStyleDefault;
     [bgToolbar setAutoresizingMask:UIViewAutoresizingFlexibleWidth];
     [self.view addSubview:bgToolbar];
@@ -1068,8 +1110,8 @@
             CGFloat temp = rect.size.width;
             rect.size.width = rect.size.height;
             rect.size.height = temp;
+            rect.origin = CGPointZero;
         }
-        rect.origin = CGPointZero;
     }
     return rect;
 }
@@ -1104,4 +1146,3 @@
 
 
 @end
-
